@@ -1,0 +1,95 @@
+---
+title: "Analyzing Forest Fires"
+output: html_notebook
+---
+
+```{r}
+require(tidyverse)
+require(ggplot2)
+
+forestfires <- read.csv("forestfires.csv")
+head(forestfires, 50)
+```
+Loading tidyverse and ggplot2 packages and importing the forest fire csv file into a dataframe. We use head to look at the first several rows in order to get a sense of the structure and formatting of the data.
+```{r}
+forestfires %>% pull(month) %>% unique()
+forestfires %>% pull(day) %>% unique()
+```
+Taking a look at the month and day variables we can see how they are abbreviated as well as how they are ordered.
+```{r}
+forestfires <- forestfires %>%
+    mutate(
+      month = factor(month, levels = c("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")),
+      day = factor(day, levels = c("mon", "tue", "wed", "thu", "fri", "sat", "sun"))
+    )
+```
+We can change the order of the month and day variables as well as changing them into categorical variables.
+```{r}
+numff.month <- forestfires %>%
+  group_by(month) %>%
+  summarize(
+   n = n()
+  )
+numff.day <- forestfires %>%
+  group_by(day) %>%
+  summarize(
+   n = n()
+  )
+numff.month %>%
+      ggplot(aes(x = month, y = n)) +
+      geom_col() +
+      labs(
+        title = "Forest Fires by Month",
+        y = "Number of Forest Fires")
+numff.day %>%
+      ggplot(aes(x = day, y = n)) +
+      geom_col() +
+      labs(
+        title = "Forest Fires by Day of the Week",
+        y = "Number of Forest Fires")
+```
+We group the data by both month and day, then summarize the dataframes by counting the number of observations for each month/day and load those summaries into a new data frame, respectively. Thanks to the categoricalization of the variables 'month' and 'day' we are able to have the designated order in our graphs. 
+
+Quick takeaways; Peak forest fire season is within the months of the August and September. Additionally, forest fires tend to occur during the weekend i.e. Friday-Sunday. 
+```{r}
+forestfires_long <- forestfires %>%
+  pivot_longer(
+    cols = c(FFMC, DMC, DC, ISI, temp, RH, wind, rain),
+    names_to = "variables",
+    values_to = "values"
+  )
+forestfires_long %>%
+  ggplot(aes(x=month, y=values)) +
+  geom_line() +
+  facet_wrap(vars(variables),
+  scales = "free_y")
+
+forestfires_long %>%
+  ggplot(aes(x=day, y=values)) +
+  geom_line() +
+  facet_wrap(vars(variables),
+  scales = "free_y")
+```
+Values for the following indices have positive correlation with the number of forest fires by month; DC, DMC, and Temperature. This shows that Temperature, Rain, and Relative humidity are significantly contributing factors as they factor into the calculation for DC, and DMC. 
+```{r}
+forestfires_long %>%
+  ggplot(aes(x=values, y=area)) +
+  geom_point() +
+  facet_wrap(vars(variables) ,
+  scales = "free_x")
+
+cor_ff <- cor(forestfires[13], forestfires[5:12], method = "spearman")
+head(cor_ff)
+```
+Higher values of FFMC, DC, and Temperature show more correlation with higher values of forest fire area (intensity). Running a correlative comparison shows temperature as having the highest p-value.
+```{r}
+forestfires_long_filter <- forestfires_long %>%
+  filter(area > 0)
+forestfires_long_filter %>%
+  ggplot(aes(x=values, y=log2(area))) +
+  geom_point() +
+  facet_wrap(vars(variables) ,
+  scales = "free_x")
+  
+```
+
