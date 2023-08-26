@@ -1,0 +1,353 @@
+---
+title: "Analyzing New York Highschool Data"
+author: "David Dunn"
+data: "February 19, 2023"
+output: html_notebook
+---
+
+Loading necessary packages and importing csv files into dataframes.
+
+```{r}
+require(tidyverse)
+
+sat_results <- read.csv("2012_SAT_Results.csv")
+ap_2010 <- read.csv("2010__AP__College_Board__School_Level_Results.csv")
+class_size <- read.csv("2010-2011_Class_Size_-_School-level_detail.csv")
+demographics <-read.csv("2006_-_2012_School_Demographics_and_Accountability_Snapshot.csv")
+graduation <- read.csv("2005-2010_Graduation_Outcomes_-_School_Level.csv")
+hs_directory <- read.csv("2014_-_2015_DOE_High_School_Directory.csv")
+```
+
+Using the map function on each dataframe to apply the class function for each of the variables to display the data types. This allows us to identify which variables need to have their data types changed.
+
+```{r}
+map(sat_results, class)
+map(ap_2010, class)
+map(class_size, class)
+map(demographics, class)
+map(graduation, class)
+map(hs_directory, class)
+```
+
+Changing the data types of certain variables or columns of the dataframe from character to numeric in order to allow for numerical analysis.
+
+```{r}
+sat_results_clean <- sat_results %>%
+    mutate(`SAT Critical Reading Avg. Score` = as.numeric(`SAT Critical Reading Avg. Score`)) %>%
+    mutate(`SAT Math Avg. Score` = as.numeric(`SAT Math Avg. Score`)) %>%
+    mutate(`SAT Writing Avg. Score` = as.numeric(`SAT Writing Avg. Score`)) %>%
+    mutate(avg_sat_score = `SAT Writing Avg. Score` + `SAT Critical Reading Avg. Score` + `SAT Math Avg. Score`)
+```
+
+Using the across function to apply the same transformation as above to multiple columns filtering for columns whose title contain the text "SAT". 
+
+```{r}
+sat_results <- sat_results %>%
+    mutate(across(contains("SAT"), as.numeric)) %>%
+    mutate(
+        avg_sat_score = `SAT Writing Avg. Score` + `SAT Critical Reading Avg. Score` + `SAT Math Avg. Score`
+        )
+```
+
+Using the mutate and across functions to change select variables to numeric data type. Additionally two new variables are created: avg number of AP exams each students takes, and percentage of all exams with a three or higher.
+
+```{r}
+ap_2010 <- ap_2010 %>%
+    mutate(across (`AP Test Takers` : `Number of Exams with scores 3 4 or 5`,  as.numeric)) %>%
+    mutate(exams_per_student = `Total Exams Taken`/`AP Test Takers`) %>%
+    mutate(high_score_percent = (`Number of Exams with scores 3 4 or 5`/`Total Exams Taken`)*100)
+```
+
+Filter for highschool classes and general education program types.
+
+```{r}
+class_size <- class_size %>%
+    filter(`GRADE` == "09-12" & `PROGRAM TYPE` == "GEN ED")
+```
+
+Create a new summary dataframe with some of the variables from the original class_size dataframe and few others that are new based on average class sizes.
+
+```{r}
+class_size <- class_size %>%
+    group_by(`CSD`, `SCHOOL CODE`, `SCHOOL NAME`) %>%
+    summarize(avg_class_size = mean(`AVERAGE CLASS SIZE`),
+              avg_largest_class = mean(`SIZE OF LARGEST CLASS`),
+              avg_smallest_class = mean(`SIZE OF SMALLEST CLASS`)
+              )
+````
+
+Create a new dataframe which filters the original graduation dataframe for total cohort and 2006 cohort. A selection of variables are chosen as well.
+
+```{r}
+graduation <- graduation %>%
+    filter(`Demographic` == "Total Cohort" & `Cohort` == "2006") %>%
+    select(`DBN`, `School Name`, `Total Grads - % of cohort`, `Dropped Out - % of cohort`)
+```
+
+Filter the demographics dataframe for values of schoolyear with 20112012 and values of grade9 that are not NA. Select for the DBN and Name variables, as well as those which end with "_per".
+
+```{r}
+demographics <- demographics %>%
+    filter(`schoolyear` == "20112012" & !is.na(grade9)) %>%
+    select(DBN, Name, ends_with("_percent"), ends_with("_per"), total_enrollment)
+```
+
+Further filter the demographics dataframe by removing the Name and female_per variables.
+
+```{r}
+demographics_clean <- demographics %>%
+    select(-Name, -female_per)
+```
+
+Clean the hs_directory dataframe by selecting the dbn, school_name, and `Location 1` variables. Rename dbn to DBN in order to be consistent with other dataframes.
+
+```{r}
+hs_directory <- hs_directory %>%
+    select(dbn, school_name, `Location 1`) %>%
+    rename(DBN = dbn)
+```
+
+Extracting only the character strings' numeric portion using the parse_number function.
+
+```{r}
+graduation <- graduation %>%
+    mutate(across(3:4, parse_number))
+```
+
+The `location 1` variable contains untidy data; we have to use separate() to break the values apart into their own cells. The string will be broken apart using the "\n" separator. We dispose of the first two new strings which have the address and we keep the third string which contains the lattitude and longitude coordinates.
+
+```{r}
+hs_directory <- hs_directory %>%
+    separate(col = `Location 1`,
+             into = c("string_1", "string_2", "string_3"),
+             sep = "\n") %>%
+    select(-string_1, -string_2) %>%
+    rename(lat_long = string_3)
+```
+
+Using separate() we choose the comma to split the coordinates into the lat and long columns.
+
+```{r}
+hs_directory <- hs_directory %>%
+    separate(col = `lat_long`,
+             into = c("lat", "long"),
+             sep = ",")
+```
+
+We need to remove the parenthesis that remain from separating the values. We can use parse_number() to do this or we can try a new function str_sub() which takes a subset of the string based on starting and ending positions. Positive numbers in the operand of str_sub() indicate being read from left to right, negative are for right to left. 
+
+```{r}
+hs_directory <- hs_directory %>%
+    mutate(lat = str_sub(lat, 2, -1), long = str_sub(long, 1, -2)) %>%
+    mutate(across(lat:long, as.numeric))
+```
+
+The class_size dataframe does not have a DBN variable so we are creating one from the `CSD` and `SCHOOL CODE` variables through string concatenation and padding. We observe values for DBN from other dataframes as having 6 digits, so for those that are only 5 digits after concatenation we will pad the left side of the value with a 0.
+
+```{r}
+class_size <- class_size %>%
+    mutate(DBN = str_c(`CSD`, `SCHOOL CODE`, sep = "")) %>%
+    mutate(DBN = str_pad(DBN, width = 6, side = 'left', pad = "0"))
+````
+
+Since we are using values of the variable DBN from each dataframe as the key for joining the dataframes into a single one we need to check for duplicate instances of DBN and count the number duplicated values. Finally we create a list containing values of duplication within each dataframe.
+
+```{r}
+sat_results_duplicated <- sum(duplicated(sat_results$DBN))
+ap_2010_duplicated <- sum(duplicated(ap_2010$DBN))
+class_size_duplicated <- sum(duplicated(class_size$DBN))
+demographics_duplicated <- sum(duplicated(demographics$DBN))
+graduation_duplicated <- sum(duplicated(graduation$DBN))
+hs_directory_duplicated <- sum(duplicated(hs_directory$DBN))
+duplicate_DBN <- list("sat_results" = sat_results_duplicated, "ap_2010" = ap_2010_duplicated, "class_size" = class_size_duplicated, "demographics" =  demographics_duplicated, "graduation" = graduation_duplicated, "hs_directory" = hs_directory_duplicated)
+```
+
+From the list of duplicated DBN values we find that only the dataframe ap_2010 has non-zero values so we use the distinct() function to remove the duplicates.
+
+```{r}
+ap_2010 <- ap_2010 %>%
+    distinct(DBN, .keep_all = TRUE)
+```
+
+Using inner_join() to combine the sat_results and class_size dataframes with "DBN" being the key for the join. We create a scatter plot to gauge the relationship between SAT scores and class sizes.
+
+```{r}
+sat_class_size <- sat_results %>%
+    inner_join(class_size, by = "DBN")
+ggplot(data = sat_class_size) + 
+    aes(x = avg_class_size, y = avg_sat_score) +
+    geom_point()
+```
+
+To get a sense of the different types of outter join we try left, right, and full join on the sat_results and demographics dataframes and then we compare the sizes using nrow().
+
+```{r}
+demo_sat_left <- sat_results %>%
+    left_join(demographics, by = "DBN")
+demo_sat_right <- sat_results %>%
+    right_join(demographics, by = "DBN")
+demo_sat_full <- sat_results %>%
+    full_join(demographics, by = "DBN")
+sat_count <- nrow(sat_results)
+demo_count <- nrow(demographics)
+left_count <- nrow(demo_sat_left)
+right_count <- nrow(demo_sat_right)
+full_count <- nrow(demo_sat_full)
+```
+
+Since sat_results and ap_2010 have the primary comparative features we want to examine we will join the other dataframes to them after fully joining the two. We will use an outer left join in order to keep only the observations that match by the key "DBN" with the fully joined dataframe.
+
+```{r}
+combined <- sat_results %>%
+    full_join(ap_2010, by = "DBN") %>%
+    left_join(class_size, by = "DBN") %>%
+    left_join(demographics, by = "DBN") %>%
+    left_join(graduation, by = "DBN") %>%
+    left_join(hs_directory, by = "DBN")
+```
+
+After joining all the dataframes into one we need to clean up the redundant variables that exist in the new combined dataframe. We do this be selecting for a negative vector of the variables we wish to remove. We rename the school name vector we've chosen to keep to school_name.
+
+```{r}
+combined <- combined %>%
+    select(-c(`SchoolName`, `SCHOOL NAME.y`, `Name`, `School Name`, `school_name`, `Location 1`)) %>%
+    rename(school_name = `SCHOOL NAME.x`)
+```
+
+We are interested in understanding how the demographic variables affect avg_sat_score so we are creating several graphs where avg_sat_score is the independent y-variable and various demographic variables are the x-variable.
+
+```{r}
+ggplot(data = combined,
+       aes(x=frl_percent, y=avg_sat_score)) + 
+        geom_point()
+ggplot(data = combined,
+       aes(x=ell_percent, y=avg_sat_score)) + 
+        geom_point()
+ggplot(data = combined, 
+       aes(x=sped_percent, y=avg_sat_score)) +
+        geom_point()
+```
+
+We want to reshape the data so that it is in the proper form to plot. We use pivot_longer() to combine four variables into two: "race" and "percent". This allows us to plot the avg_sat_score in relation to the racial percentage and differentiate the dependent variable with color.
+
+```{r}
+combined_race_longer <- combined %>%
+    pivot_longer(cols = c(asian_per, black_per, hispanic_per, white_per),
+                 names_to = "race",
+                 values_to = "percent")
+ggplot(data = combined_race_longer,
+       aes(x = percent, y = avg_sat_score, color = race)) +
+        geom_point()
+```
+
+To do the reverse operation and create additional variables from a few we use the pivot_wider function; unique names from the race variable become their own variable with the corresponding percentage as the values.
+
+```{r}
+combined_race_wider <- combined_race_longer %>%
+    pivot_wider(names_from = race, values_from = percent)
+```
+
+An improvement to the plotting allows us to disambiguate the points from one another by faceting the plot by group.
+
+```{r}
+ggplot(data = combined_race,
+  aes(x = percent, y = avg_sat_score, color = race)) +
+  geom_point() +
+  facet_wrap(~race)
+```
+
+Calculating Pearson's r for asian_per and avg_sat_score. We specify pairwise.complete.obs in the cor() function to exclude the cases with NA
+
+```{r}
+round(cor(combined$asian_per, combined$avg_sat_score, use = "pairwise.complete.obs"), 7)
+```
+
+We create a correlation matrix for all numeric variables in the combined dataframe. This helps us to decide which relationships to explore further using visualization based on the correlation coefficient. 
+
+```{r}
+cor_mat <- combined %>%
+    select(where(is.numeric)) %>%
+    cor(use = "pairwise.complete.obs")
+```
+
+First we need to convert the correlation matrix into a dataframe using as_tibble(). We then want to show the relationship between the high_score_percent variable and other variables. Lastly we filter for anything above 0.25 or below -0.25 to remove anything that zero or low correlation. 
+
+```{r}
+cor_tib <- cor_mat %>%
+  as_tibble(rownames = "variable")
+apscore_cors <- cor_tib %>%
+    select(variable, high_score_percent) %>%
+    filter(high_score_percent > 0.25 | high_score_percent < -0.25)
+```
+
+Calculating the average sat score for each borough.
+
+```{r}
+summary <- combined %>%
+  group_by (`boro`) %>%
+  summarize(mean(`avg_sat_score`))
+```
+
+The above attempt does not account for values of NA therefore the resulting summary had NA values for all boroughs except for Staten Island due to Staten Island being the only borough that had no NA values in the avg_sat_score variable. We add the na.rm argument to the mean function in order to exlude NA values from the calculation.
+
+```{r}
+summary <- combined %>%
+  group_by(`boro`) %>%
+  summarize(mean(avg_sat_score, na.rm = TRUE))
+```
+
+This is much improved however the 6th borough is NA which is a problem. Therefore we must filter out values of NA within the boro variable. We can do this through filter(!is.na(boro)) or through drop_na(boro). 
+
+```{r}
+summary_2 <- combined %>%
+  drop_na(boro) %>%
+  group_by(boro) %>%
+  summarize(sat_avg = mean(avg_sat_score, na.rm = TRUE))
+```
+
+Alternatively we can drop all observations which contain NA values by using drop_na() early in the data pipeline.
+
+```{r}
+summary_3 <- combined %>%
+  drop_na() %>%
+  group_by(boro) %>%
+  summarize(mean(avg_sat_score))
+```
+
+Blindly dropping all NA values and only using "complete cases" has drawbacks.It can depend on which correlations we are interested in exploring. If we count the number of NA values in each variable we can get an idea of the amount of information we are losing.
+
+```{r}
+na_count <- colSums(is.na(combined))
+```
+
+Upon examination, dropping all NA values biases the result towards schools that had values for AP test takers and even moreso for those with exam results of 3 or higher since those were the variables where most of the NA values were found. Using this knowledge we can adjust the way we remove NA values to not preclude those schools.
+
+```{r}
+summary_4 <- combined %>%
+  drop_na(boro) %>%
+  group_by(boro) %>%
+  summarize(mean(avg_sat_score, na.rm = TRUE),
+            mean(frl_percent, na.rm = TRUE),
+            mean(`AP Test Takers`, na.rm = TRUE))
+```
+
+After reviewing the metadata, for AP Test Takers "records with 5 or fewer students are suppressed" so some of the NA values may have been somewhere between 0 to 5. Therefore instead of discarding the observations where values for AP Test Takers were NA we can change the value from NA to an average of the probable value: 2.5. We then drop observations for NA values in the boro variable and create a boxplot.
+
+```{r}
+combined <- combined %>%
+  mutate("AP Test Takers" = replace_na(`AP Test Takers`, 2.5))
+combined_2 <- combined %>%
+  drop_na(boro)
+ggplot(data = combined_2,
+       aes(x=boro, y=`AP Test Takers`)) +
+       geom_boxplot()
+```
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
