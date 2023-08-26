@@ -258,14 +258,3 @@ Ideas for continued work with the motor vehicle collision data set:
 2. Clean the values in the vehicle_1 through vehicle_5 columns by analyzing the different values and merging duplicates and near-duplicates.
 
 3. Analyze whether collisions are more likely in certain locations, at certain times, or for certain vehicle types.
-
-
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
