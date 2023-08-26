@@ -1,0 +1,160 @@
+---
+title: "Exploring NYC High School Survey Data"
+author: "David Dunn"
+date: "May 9, 2023"
+output: html_notebook
+---
+In this project we will be examining the relationship between responses to surveys from parents, teachers, and students from NYC schools and the scholastic performance of students from those schools. Data was obtained from the New York City Department of Education. The two main questions we seek to answer are: Do student, teacher, and parent perceptions of NYC school quality appear to be related to demographic and academic success metrics? Do students, teachers, and parents have similar perceptions of NYC school quality?
+
+```{r}
+require(tidyverse)
+require(readxl)
+
+combined <- read_csv("combined.csv")
+d75 <- read_tsv("masterfile11_d75_final.txt")
+gened <- read_tsv("masterfile11_gened_final.txt")
+dict <- read_excel("Survey Data Dictionary.xls")
+```
+
+Looking at the unique values for the schooltype variable so we know how to filter for High Schools.
+
+```{r}
+gen_uni <- unique(gened$schooltype)
+d75_uni <- unique(d75$highschool)
+print(gen_uni)
+print(d75_uni)
+```
+
+We need to simplify the data and drop the variables we don't need to work with. We can also select for observations that we know or suspect to be high schools. We use str_detect() to find schools that may be listed as Middle / High School as those will still interest us. 
+
+```{r}
+gened_1 <- gened %>%
+    filter(str_detect(`schooltype`, "High", negate = FALSE)) %>%
+    select(dbn:aca_tot_11)
+d75_1 <- d75 %>%
+    filter(is.na(highschool)) %>%
+    select(dbn:aca_tot_11)
+```
+
+Now that the important observations and variables have been isolated we need to combine the general education and district 75 dataframes. Once we do that we will need to join the new dataframe to the combined dataframe choosing dbn as the key. We choose left_join() in order to 
+
+```{r}
+gen75 <- bind_rows(gened_1, d75_1) %>%
+    rename(DBN = dbn) %>%
+    select(-bn, -d75, -studentssurveyed, -highschool)
+combined_survey <- combined %>%
+    left_join(gen75, by = "DBN")
+```
+
+We want to know if student, teacher, and parent perceptions of NYC school quality appear to be related to demographic and academic success. In order to gauge this we need to create a correlation matrix and scatter plots.
+
+```{r}
+cor_mat <- combined_survey %>%
+    select(where(is.numeric)) %>%
+    cor(use = "pairwise.complete.obs")
+```
+
+Converting the correlation matrix of all numeric variables we select single variable to compare against all others while filtering for "significant" correlation.
+
+```{r}
+cor_tib <- cor_mat %>%
+    as_tibble(rownames = "variable")
+high_score_cors <- cor_tib %>%
+    select(variable, high_score_percent) %>%
+    filter(high_score_percent > 0.25 | high_score_percent < -0.25)
+frl_cors <- cor_tib %>%
+    select(variable, frl_percent) %>%
+    filter(frl_percent > 0.25 | frl_percent < -0.25)
+avg_sat_score <- cor_tib %>%
+    select(variable, avg_sat_score) %>%
+    filter(avg_sat_score > 0.25 | avg_sat_score < -0.25)
+aca_tot_cors <- cor_tib %>%
+    select(variable, aca_tot_11) %>%
+    filter(aca_tot_11 > 0.25 | aca_tot_11 < -0.25)
+saf_tot_cors <- cor_tib %>%
+    select(variable, saf_tot_11) %>%
+    filter(saf_tot_11 > 0.25 | saf_tot_11 < -0.25)
+com_tot_cors <- cor_tib %>%
+    select(variable, com_tot_11) %>%
+    filter(com_tot_11 > 0.25 | com_tot_11 < -0.25)
+eng_tot_cors <- cor_tib %>%
+    select(variable, eng_tot_11) %>%
+    filter(eng_tot_11 > 0.25 | eng_tot_11 < -0.25)
+saf_s_cors <- cor_tib %>%
+    select(variable, saf_s_11) %>%
+    filter(saf_s_11 > 0.25 | saf_s_11 < -0.25)
+rr_s_cors <- cor_tib %>%
+    select(variable, rr_s) %>%
+    filter(rr_s > 0.25 | rr_s < -0.25)
+rr_t_cors <- cor_tib %>%
+    select(variable, rr_t) %>%
+    filter(rr_t > 0.25 | rr_t < -0.25)
+rr_p_cors <- cor_tib %>%
+    select(variable, rr_p) %>%
+    filter(rr_p > 0.25 | rr_p < -0.25)
+```
+
+Plotting a few of the variables with high Pearson coefficients to see if they are worth exploring.
+
+```{r}
+ggplot(data = combined_survey,
+       aes(x=saf_s_11, y=high_score_percent)) +
+        geom_point()
+ggplot(data = combined_survey,
+       aes(x=aca_tot_11, y=high_score_percent)) +
+        geom_point()
+```
+
+We are pivoting the dataframe longer in order to prepare the survey data for plotting. All 16 of the survey response variables will pivot into the survey_question variable while the values for them will pivot into the score variable.
+
+```{r}
+combined_survey_longer <- combined_survey %>%
+    pivot_longer(cols = c(saf_p_11, com_p_11, eng_p_11, aca_p_11, saf_t_11, com_t_11, eng_t_11, aca_t_11, saf_s_11, com_s_11, eng_s_11, aca_s_11, saf_tot_11, com_tot_11, eng_tot_11, aca_tot_11),
+                 names_to = "survey_question",
+                 values_to = "score")
+ggplot(data = combined_survey_longer,
+       aes(x = score, y = high_score_percent, color = survey_question)) +
+        geom_point() +
+        facet_wrap(~survey_question)
+```
+
+Using recursion to parse the survey_question variable and extract the substrings "p", "s", and "t" in order to create a new variable "response_type". Still working out the syntax, need to revisit.
+
+```{r}
+
+combined_survey_longer_2 <- combined_survey_longer %>%
+    mutate(reponse_type = str_sub(survey_question, 4, 6)) %>%
+    mutate(response_type = if_else(response_type == "_p_", "parent", 
+                  if_else(response_type == "_s_", "student", 
+                  if_else(response_type == "_t_", "teacher",
+                  if_else(response_type == "_tot_", "total", "NA"))))) 
+```
+
+Cleaner approach to the above operation. This parses out 3 substrings separated by "_" which gives 3 new variables which we are calling "metric" for survey question type, "response_type" for type of person who responded, and "year" for the year the survey was conducted. Since all values of year are the same we don't need this so we select it out.
+
+```{r}
+combined_survey_longer_1 <- combined_survey_longer %>%
+    separate(col = `survey_question`,
+             into = c("metric", "response_type", "year"),
+             sep = "_") %>%
+    select(-year)
+```
+
+Creating a summary grouping by type of respondents and survey metric i.e. academic, communications, safety, engagement. We can see that in general parents gave higher ratings on average and specifically the greatest disparity was between student and parent ratings of safety. Teachers ratings were slightly higher than students with the biggest disparity also being safety. 
+
+```{r}
+summary <- combined_survey_longer_1 %>%
+    group_by(response_type, metric) %>%
+    summarize(mean(score, na.rm = TRUE))
+```
+
+```{r}
+
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
