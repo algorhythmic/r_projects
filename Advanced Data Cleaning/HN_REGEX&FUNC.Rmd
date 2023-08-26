@@ -1,0 +1,208 @@
+---
+title: "Using REGEX and Functions on Hacker News Datasets"
+author: "DDunn"
+date: '2023-05-15'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+require(tidyverse)
+hn <- read_csv("HN_posts_year_to_Sep_26_2016.csv")
+```
+
+In this project we will primarily be using regex to parse the titles of Hacker News posts from Sep 2015-2016. We use a set: [Aa] in order to include capital and lowercase instances of amazon being mentioned in the title. 
+
+```{r}
+titles <- hn$title
+amzn_matches <- str_detect(titles, "[Aa]mazon")
+hn_amzn_matches <- if_else(amzn_matches, "Match", "No Match")
+hn_amzn_matches_1 <- if_else(amzn_matches == TRUE, "Match",
+                     if_else(amzn_matches == FALSE, "No Match", "NA"))
+amzn_matches_count <- sum(amzn_matches)
+```
+
+Using the alternative character "|" we select for titles that include the years 2000, 2005, and 2010. We then create a new variable that shows which posts match with mentions of these years.
+
+```{r}
+year_matches <- str_detect(titles, "2000|2005|2010")
+hn_year_group <- hn %>%
+    mutate(year_group = year_matches)
+```
+
+Here we use the set [Gg] to find titles with mention of google. We create a new dataframe that only has observations of titles with mention of google.
+
+```{r}
+google_titles_logical <- str_detect(titles, "[Gg]oogle")
+google_titles <- titles[google_titles_logical]
+hn_google <- hn %>%
+    filter(google_titles_logical)
+```
+
+Using a single character quantifier "?" for the dash in e-mail we designate as being optional. We then parse the titles for mention of e-mail or email.
+
+```{r}
+email_logical <- str_detect(titles, "e-?mail")
+email_count <- sum(email_logical)
+email_titles <- titles[email_logical]
+```
+
+Using the character class "\w" with the quantifier "+" and since we are using R we must use a double backslash for the escape sequence. Finding the number of posts with tags and tallying the total amount.
+
+```{r}
+tag_titles_logical <- str_detect(titles, "\\[\\w+\\]")
+tag_titles <- titles[tag_titles_logical]
+tag_count <- sum(tag_titles_logical)
+```
+
+Using the capture group "(\\w+)" and str_match we are able to extract the character content of the tags into a matrix with the whole matching pattern and the match within parenthesis. We then choose the second column and create a frequency table with it. 
+
+```{r}
+tags_matches <- str_match(tag_titles, "\\[(\\\w+)\\]")
+tags_text_matches <- tags_matches[,2]
+tags_freq <- table(tags_text_matches)
+```
+
+In order to test the regex we have created a function "first_10_matches" which can apply str_detect using regex and data to subset the matches and show the first 10 matched elements. We then search for titles containing Java and using negative character class "[Jj]ava[^Ss]" we ensure that Javascript is not in the selection. 
+
+```{r}
+first_10_matches <- function (data, pattern) {
+  matches <- str_detect(data, pattern) #finding pattern matches
+  matched_df <- data[matches] #subsetting data (keep only matches)
+  head(matched_df, 10) #taking the first ten matched elements
+}
+first_10_matches(titles, "[Jj]ava[^Ss]")
+java_titles_logical <- str_detect(titles, "[Jj]ava[^Ss]")
+java_titles <- titles[java_titles_logical]
+```
+
+In the event that java was the last word at the end of a string, the previous approach would not have selected it. In order to correct for this we need to use boundary anchors \b to match the position between word characters thereby allowing us to isolate the substring "Java".
+
+```{r}
+java_titles_logical <- str_detect(titles, "\\b[Jj]ava\\b")
+java_titles <- title[java_titles_logical]
+```
+
+Using beginning and end anchors "^" and "$" we can count the number of time that tags are placed at either the beginning of end of the title of a post.
+
+```{r}
+beginning_count <- sum(str_detect(titles, "^\\[\\w+\\]"))
+ending_count <- sum(str_detect(titles, "\\[\\w+\\]$"))
+```
+
+In order to account for the variations of the word "e-mail" we need to use an ignorecase flag "(?i)" as well as single character class and quantifier ".?".
+
+```{r}
+email_mentions <- sum(str_detect(titles, "(?i)e.?mail"))
+```
+
+Creating a regular expression to capture all mentions of python that may include version numbers. We then create a frequency table to see the number of times each variation of python was mentioned.
+
+```{r}
+python_titles <- str_match(titles, "(?i)(python\\s+?\\d+?)")
+python_freq <- table(str_to_lower(python_titles))
+```
+
+Using capture groups to capture the versions of python and assigning them to a frequency table.
+
+```{r}
+python_v_freq <- table(str_match(python_titles, "(?i)python ?([\\d\\.]+)")[,2])
+```
+
+Using negative sets to remove mentions of C++ or C.E.O when trying to find titles with "C" in them. We then improve this by also removing cases where the term "Series" precedes "C" by using Lookarounds.
+
+```{r}
+first_ten_C <- first_10_matches(titles, "\\b[Cc]\\b[^\\.\\+]+")
+c_mentions <- sum(str_detect(titles, "(?<![Ss]eries )\\b[Cc]\\b(?![\\.\\+])"))
+```
+
+Using BackReferences we can check if there any words in the titles that have been repeated consecutively.
+
+```{r}
+repeated_words <- titles[str_detect(titles, "\\b(\\w+)\\s\\1\\b")]
+```
+
+The regular expresion here is to capture any time "SQL" is preceded by one or more word characters, ignoring for all case variation. We create a new dataframe that includes only rows that mention a SQL flavor, then we create a summarization of the average number of comments for each flavor of SQL.
+
+```{r}
+titles <- hn$titles
+pattern <- "(?i)(\\w+SQL)"
+sql_logic <- str_detect(titles, pattern)
+sql_count <- sum(sql_logic)
+sql_mention <- str_match(titles, pattern)[,2]
+hn_sql <- hn %>%
+  filter(sql_logic) %>%
+  mutate(flavor = str_to_lower(sql_mention))
+hn_sql_flavor_avg <- hn_sql %>%
+  select(flavor, num_comments) %>%
+  group_by(flavor) %>%
+  summarize(avg = mean(num_comments, na.rm = TRUE))
+```
+
+We can replace substrings using the str_replace or str_replace_all functions.
+
+```{r}
+email_uniform <- str_replace_all(titles, "(?i)e.?mail", "email")
+```
+
+Our final task will be to extract information from the $url variable in hn. First we will capture domains.
+
+```{r}
+domains <- str_match(hn$url, "(?i)(?<=https?://)([\\w\\.]+)/?")[,2]
+```
+
+Next we will use multiple capture groups to extra three components from the url: Protocol, Domain, and Page path. We create a new dataframe with the appended respective variables. Note that there are two forms of the regular expression; investigate and test for similarity as a future action.
+
+```{r}
+pattern_2 <- "(?i)(\\w+)://([\\w\\.]+)/?(.*)"
+pattern_1 <- "(.+)://([^:/]+)/?(.*)"
+hn_urls <- hn %>%
+  mutate(protocol = str_match(url, pattern_1)[,2],
+         domain = str_match(url, pattern_1)[,3],
+         page_patch = str_match(url, pattern_1)[,4])
+```
+
+```
+In this next section we will be using a different dataset sourced from the same website: Hacker News. This dataset comes in the form of a JSON file so there are a few new steps necessary to import this into a dataframe.
+```
+
+Loading the JSON file into a dataframe with fromJSON()  and removing a redundant variable, then we map the class function to the dataframe variables in order to understand each of their datatypes.
+
+```{r}
+library(purrr)
+library(dplyr)
+hn_json <- fromJSON("hn_2014.json")
+hn_json_clean <- hn_json %>%
+  select(-createdAtI)
+hn_json_classes <- map_df(hn_json_clean, class)
+```
+
+Creating two variables containing the second and third elements of each list in the tags variable, respectively.
+
+```{r}
+tags <- hn_json_clean[, 'tags']
+second_tags <- unique(map_chr(tags, `[`, 2))
+third_tags <- unique(map_chr(tags, `[`, 3))
+```
+
+Using anonymous functions to index the fourth value of a list, then creating a new column containing the fourth value of each list in the tags variable from the hn_tags4 dataframe.
+
+```{r}
+hn_tags4 <- hn_clean %>%
+    filter(map_lgl(tags, function(x) length(x) == 4))
+hn_tags4_new <- hn_tags4 %>%
+    mutate(tag_4 = map_chr(tags, function(x) x[4]))
+```
+
+Taking a subset of the hn_json_clean dataset named hn_clean_subset we unnest the JSON dataframe, add a new column id_tag with tag_# where # is the row number for each group of duplicated rows, then pivot wider the id_tag variable using the values from the tags variable. We group by all the other variables we are not operating on. 
+
+```{r}
+hn_clean_unnest <- hn_clean_subset %>%
+    unnest(cols = tags) %>%
+    group_by(author, numComments, points, url, storyText, createdAt, title, objectId) %>%
+    mutate(id_tag = str_c("tag_", row_number(), "")) %>%
+    pivot_wider(names_from = id_tag, values_from = tags)
+```
